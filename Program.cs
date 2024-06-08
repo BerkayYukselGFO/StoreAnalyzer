@@ -73,7 +73,9 @@ namespace AppAnalyzer
 
             var endTime = DateTime.Now;
             var diff = endTime - startTime;
-            CreatePDFReport(developers);
+            await CreatePDFReport(developers, "Son 3 ay raporu", 90, 500);
+            await CreatePDFReport(developers, "Son 1 ay raporu", 30, 500);
+            await CreatePDFReport(developers, "Son hafta raporu", 7, 0);
             Console.Read();
         }
 
@@ -623,9 +625,9 @@ namespace AppAnalyzer
 
             await client.SetAsync("Developer/" + developer.developerName, developer);
         }
-        public static async Task CreatePDFReport(List<Developer> developers)
+        public static async Task CreatePDFReport(List<Developer> developers,string name,int dayDifference,int downloadMinCount)
         {
-            string filePath = "GameReport.pdf";
+            string filePath = name+".pdf";
             Document doc = new Document();
             PdfWriter.GetInstance(doc, new FileStream(filePath, FileMode.Create));
             doc.Open();
@@ -637,10 +639,10 @@ namespace AppAnalyzer
             doc.Add(new Paragraph("\n"));
 
             // Filter and sort games
-            DateTime threeMonthsAgo = DateTime.Now.AddMonths(-3);
+            DateTime threeMonthsAgo = DateTime.Now.AddDays(-dayDifference);
             var filteredGames = developers
                 .SelectMany(d => d.games)
-                .Where(g => g.releaseDate >= threeMonthsAgo && g.downloadValues.Last() >= 500)
+                .Where(g => g.releaseDate >= threeMonthsAgo && g.downloadValues.Last() >= downloadMinCount)
                 .OrderByDescending(g => g.releaseDate)
                 .ToList();
 

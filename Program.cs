@@ -1,23 +1,22 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Text;
 using System.Threading.Tasks;
 using HtmlAgilityPack;
 using OpenQA.Selenium;
 using OpenQA.Selenium.Chrome;
 using OpenQA.Selenium.Support.UI;
-using OpenQA.Selenium.Support;
 using SeleniumExtras.WaitHelpers;
-using OpenQA.Selenium.DevTools;
-using System.Net;
-using FireSharp;
 using FireSharp.Config;
 using FireSharp.Interfaces;
 using FireSharp.Response;
-using Newtonsoft.Json.Linq;
 using Newtonsoft.Json;
 using System.Threading;
+using System.IO;
+using iTextSharp.text;
+using iTextSharp.text.pdf;
+using System.Net.Http;
+using SkiaSharp;
 
 namespace AppAnalyzer
 {
@@ -42,7 +41,11 @@ namespace AppAnalyzer
         public DateTime releaseDate;
         public string iconLink;
     }
-
+    public class DownloadCountAndTaketime
+    {
+        public int downloadCount;
+        public int takeTime;
+    }
     class Program
     {
         public static List<Developer> developers;
@@ -57,11 +60,20 @@ namespace AppAnalyzer
 
             for (int i = 0; i < developerLinks.Count; i++)
             {
-                await CheckDeveloper(developerLinks[i]);
+                try
+                {
+                    await CheckDeveloper(developerLinks[i]);
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Hata: {developerLinks[i]}: {ex.Message}");
+                    // Hata durumunda yapılacak ek işlemler burada olabilir
+                }
             }
+
             var endTime = DateTime.Now;
             var diff = endTime - startTime;
-            Console.WriteLine("Tarama Bitti geçen süre: " + diff);
+            CreatePDFReport(developers);
             Console.Read();
         }
 
@@ -121,27 +133,40 @@ namespace AppAnalyzer
 
         public static async Task CheckDeveloper(DeveloperLink developerLink)
         {
-            if (developers.Any(x => x.developerName == developerLink.developerName))
+            if (developerLink == null) return;
+            try
             {
-                if (DateTime.Compare(developers.First(x => x.developerName == developerLink.developerName).lastCheckDate.AddDays(1), DateTime.Now) > 0)
+                //Son bir gün içinde kontrol edilmişse bir daha kontrol etme!
+                if (developers.Any(x => x.developerName == developerLink.developerName))
                 {
-                    Console.WriteLine("Developer name: " + developerLink.developerName + " Son test edilmesinden bu yana 1 gün geçmemiş!");
-                    return;
+                    if (DateTime.Compare(developers.First(x => x.developerName == developerLink.developerName).lastCheckDate.AddDays(1), DateTime.Now) > 0)
+                    {
+                        Console.WriteLine("Developer name: " + developerLink.developerName + " Son test edilmesinden bu yana 1 gün geçmemiş!");
+                        return;
+                    }
                 }
             }
+            catch (Exception ex)
+            {
+
+            }
+
 
             var bundleIds = new List<string>();
+
             if (developerLink.linkType == 0)
             {
                 bundleIds = CheckAppFromDeveloperStorePage(developerLink.developerLink);
             }
             else if (developerLink.linkType == 1)
             {
-                bundleIds = CheckAppFromDeveloperMoreAppPage(developerLink.developerLink);
+                var name = developerLink.developerName.Replace(" ", "+");
+                var url = "https://play.google.com/store/apps/developer?id=" + name + "&hl=en&gl=US";
+                bundleIds = CheckAppFromDeveloperMoreAppPage(url);
             }
             if (bundleIds.Count == 0) return;
 
-            var semaphore = new SemaphoreSlim(20); // Aynı anda maksimum 10 görev için izin ver.
+            var semaphore = new SemaphoreSlim(20); // Aynı anda maksimum 20 görev için izin ver.
 
             var tasks = new List<Task<Game>>();
 
@@ -152,11 +177,12 @@ namespace AppAnalyzer
 
                 foreach (var bundleId in bundleIds)
                 {
+
                     await semaphore.WaitAsync(); // Semaforun bir ünitesini al, yer yoksa beklet.
                     Task<Game> task;
-                    if (developer.games.Any(x => x.gameBundleID == bundleId))
+                    if (developer.games.Where(g => g != null).Any(x => x.gameBundleID == bundleId))
                     {
-                        var currentGameData = developer.games.Where(x => x.gameBundleID == bundleId).First();
+                        var currentGameData = developer.games.Where(g => g != null).Where(x => x.gameBundleID == bundleId).First();
                         task = CheckGame(bundleId, currentGameData);
                     }
                     else
@@ -255,11 +281,11 @@ namespace AppAnalyzer
             {
                 foreach (var appNode in appNodes)
                 {
-                    var appNameNode = appNode.SelectSingleNode(".//div[@class='Epkrse ']");
+                    var appNameNode = appNode.SelectSingleNode(".//span[@class='DdYX5']");
                     var appName = appNameNode?.InnerText;
-                    var appLinkNode = appNode.SelectSingleNode(".//a[@class='Si6A0c ZD8Cqc']");
+                    var appLinkNode = appNode.SelectSingleNode(".//a[@class='Si6A0c Gy4nib']");
                     var appLink = "https://play.google.com" + appLinkNode?.GetAttributeValue("href", "");
-                    Console.WriteLine("AppName: " + appName + " " + "   bundleID: " + GetBundleIdFromUrl(appLink));
+                    Console.WriteLine("AppName: " + appName + " " + "   bundleID: " + GetBundleIdFromUrl(appLink) + " aplink: " + appLink);
                     bundleIdList.Add(GetBundleIdFromUrl(appLink));
                 }
             }
@@ -386,42 +412,50 @@ namespace AppAnalyzer
             {
                 using (var driver = new ChromeDriver(options))
                 {
-
-                    string url = "https://play.google.com/store/apps/details?id=" + bundleId + "&hl=en_US&gl=US";
-                    string encodedUrl = Uri.EscapeUriString(url);
-                    driver.Navigate().GoToUrl(encodedUrl);
-
-                    // Sayfanın tamamlanması için bir süre bekleyin (JavaScript kodlarının çalışmasını sağlamak için)
-                    System.Threading.Thread.Sleep(50);
-
-                    var wait = new WebDriverWait(driver, TimeSpan.FromSeconds(1));
-
-                    IJavaScriptExecutor js = (IJavaScriptExecutor)driver;
-                    while (true)
+                    try
                     {
-                        try
-                        {
-                            var aboutGameButton = wait.Until(ExpectedConditions.ElementToBeClickable(By.XPath("//button[@class='VfPpkd-Bz112c-LgbsSe yHy1rc eT1oJ QDwDD mN1ivc VxpoF']")));
-                            js.ExecuteScript("arguments[0].scrollIntoView(true);", aboutGameButton);
-                            js.ExecuteScript("window.scrollBy(0, -window.innerHeight / 2);");
+                        string url = "https://play.google.com/store/apps/details?id=" + bundleId + "&hl=en_US&gl=US";
+                        string encodedUrl = Uri.EscapeUriString(url);
+                        driver.Navigate().GoToUrl(encodedUrl);
 
-                            OpenQA.Selenium.Interactions.Actions actions = new OpenQA.Selenium.Interactions.Actions(driver);
-                            actions.MoveToElement(aboutGameButton).Click().Perform();
-                            break;
-                        }
-                        catch (WebDriverTimeoutException)
+                        // Sayfanın tamamlanması için bir süre bekleyin (JavaScript kodlarının çalışmasını sağlamak için)
+                        System.Threading.Thread.Sleep(50);
+
+                        var wait = new WebDriverWait(driver, TimeSpan.FromSeconds(1));
+
+                        IJavaScriptExecutor js = (IJavaScriptExecutor)driver;
+                        while (true)
                         {
-                            break;
-                        }
-                        catch (NoSuchElementException)
-                        {
-                            break;
-                        }
-                        catch (ElementClickInterceptedException)
-                        {
-                            continue;
+                            try
+                            {
+                                var aboutGameButton = wait.Until(ExpectedConditions.ElementToBeClickable(By.XPath("//button[@class='VfPpkd-Bz112c-LgbsSe yHy1rc eT1oJ QDwDD mN1ivc VxpoF']")));
+                                js.ExecuteScript("arguments[0].scrollIntoView(true);", aboutGameButton);
+                                js.ExecuteScript("window.scrollBy(0, -window.innerHeight / 2);");
+
+                                OpenQA.Selenium.Interactions.Actions actions = new OpenQA.Selenium.Interactions.Actions(driver);
+                                actions.MoveToElement(aboutGameButton).Click().Perform();
+                                break;
+                            }
+                            catch (WebDriverTimeoutException)
+                            {
+                                return currentData;
+                            }
+                            catch (NoSuchElementException)
+                            {
+                                return currentData;
+                            }
+                            catch (ElementClickInterceptedException)
+                            {
+                                return currentData;
+                            }
                         }
                     }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"An error occurred: {ex.Message}");
+                        return currentData;
+                    }
+
                     System.Threading.Thread.Sleep(250);
                     // Sayfanın HTML içeriğini al
                     string htmlContent = driver.PageSource;
@@ -436,17 +470,15 @@ namespace AppAnalyzer
                         return currentData;
                     }
                     var downloadCount = ParseDownloadCount(document.DocumentNode.SelectSingleNode("//div[@class='ClM7O' and contains(text(),'+')] ").InnerText);
-                  
+
                     var parentNode = document.DocumentNode.SelectSingleNode(".//div[@class='q078ud' and contains(text(),'Released on')]");
-                    if(parentNode == null)
+                    if (parentNode == null)
                     {
                         parentNode = document.DocumentNode.SelectSingleNode(".//div[@class='q078ud' and contains(text(),'Updated on')]");
                     }
                     var releaseDate = ParseDateString(parentNode.ParentNode.SelectSingleNode(".//div[@class='reAt0']").InnerText);
 
-                    //var releaseDate = ParseDateString(document.DocumentNode.SelectSingleNode("//div[@class='q078ud' and contains(text(),'Released on')]").ParentNode.SelectSingleNode(".//div[@class='reAt0']").InnerText);//sMUprd
-
-                    HtmlNode iconNode = document.DocumentNode.SelectSingleNode(".//img[@class='T75of QhHVZd']");
+                    HtmlNode iconNode = document.DocumentNode.SelectSingleNode(".//img[@class='T75of CepEHc AZIq5b']"); //T75of CepEHc AZIq5b
                     string iconLink;
 
                     if (iconNode != null)
@@ -464,7 +496,7 @@ namespace AppAnalyzer
                         else
                         {
                             // İkinci XPath ifadesi de yoksa veya boşsa, gerekli işlemi yapabilirsiniz.
-                            iconLink = "default-icon-url";
+                            iconLink = "";
                         }
                     }
 
@@ -482,17 +514,38 @@ namespace AppAnalyzer
                     {
                         currentData.downloadValues.Add(downloadCount);
                         currentData.controlTimes.Add(DateTime.Now);
+                        currentData.iconLink = iconLink;
                     }
-                    Console.WriteLine("Game Name: " + currentData.gameName);
-                    Console.WriteLine("Download Count:" + downloadCount);
+
                     driver.Quit();
                     var endTime = DateTime.Now;
                     timeSpans.Add(endTime - startTime);
                     return currentData;
                 }
             });
+        }
+        public static string ResizeImage(string imageUrl, int size)
+        {
+            string resizedImageUrl = imageUrl.Replace("=s48", $"=s{size}");
 
+            return resizedImageUrl;
+        }
 
+        public static string ConvertIconLinkSize(string iconLink, int newSize)
+        {
+            //int startIndex = iconLink.IndexOf("=w");
+            //int endIndex = iconLink.IndexOf("-h");
+
+            //if (startIndex != -1 && endIndex != -1)
+            //{
+            //    string widthPart = iconLink.Substring(startIndex, endIndex - startIndex);
+            //    string newWidthPart = "=w" + newSize.ToString() + "-h" + newSize.ToString();
+
+            //    string resizedIconLink = iconLink.Replace(widthPart, newWidthPart);
+            //    return resizedIconLink;
+            //}
+
+            return iconLink;
         }
 
 
@@ -552,31 +605,6 @@ namespace AppAnalyzer
                 throw new ArgumentException("Invalid date string format.");
             }
         }
-
-        public static string ResizeImage(string imageUrl, int size)
-        {
-            string resizedImageUrl = imageUrl.Replace("=s48", $"=s{size}");
-
-            return resizedImageUrl;
-        }
-
-        public static string ConvertIconLinkSize(string iconLink, int newSize)
-        {
-            //int startIndex = iconLink.IndexOf("=w");
-            //int endIndex = iconLink.IndexOf("-h");
-
-            //if (startIndex != -1 && endIndex != -1)
-            //{
-            //    string widthPart = iconLink.Substring(startIndex, endIndex - startIndex);
-            //    string newWidthPart = "=w" + newSize.ToString() + "-h" + newSize.ToString();
-
-            //    string resizedIconLink = iconLink.Replace(widthPart, newWidthPart);
-            //    return resizedIconLink;
-            //}
-
-            return iconLink;
-        }
-
         public static async Task SaveDeveloper(Developer developer)
         {
             var config = new FirebaseConfig
@@ -594,10 +622,105 @@ namespace AppAnalyzer
 
 
             await client.SetAsync("Developer/" + developer.developerName, developer);
-            //for (int i = 0; i < developer.games.Count; i++)
-            //{
-            //    var setresponce = await client.SetTaskAsync(developer.developerName + "/" + developer.games[i].gameName, developer.games[i]);
-            //}
+        }
+        public static async Task CreatePDFReport(List<Developer> developers)
+        {
+            string filePath = "GameReport.pdf";
+            Document doc = new Document();
+            PdfWriter.GetInstance(doc, new FileStream(filePath, FileMode.Create));
+            doc.Open();
+
+            // Add title
+            Paragraph title = new Paragraph("Game Report");
+            title.Alignment = Element.ALIGN_CENTER;
+            doc.Add(title);
+            doc.Add(new Paragraph("\n"));
+
+            // Filter and sort games
+            DateTime threeMonthsAgo = DateTime.Now.AddMonths(-3);
+            var filteredGames = developers
+                .SelectMany(d => d.games)
+                .Where(g => g.releaseDate >= threeMonthsAgo && g.downloadValues.Last() >= 500)
+                .OrderByDescending(g => g.releaseDate)
+                .ToList();
+
+            foreach (var game in filteredGames)
+            {
+                // Add game icon
+                if (!string.IsNullOrEmpty(game.iconLink))
+                {
+                    try
+                    {
+                        var pngImageBytes = await ConvertWebPToPngAsync(game.iconLink);
+                        if (pngImageBytes != null)
+                        {
+                            iTextSharp.text.Image img = iTextSharp.text.Image.GetInstance(pngImageBytes);
+                            img.Alignment = Element.ALIGN_CENTER;
+                            img.ScaleToFit(100f, 100f); // Resmi biraz daha büyüt
+                            doc.Add(img);
+                        }
+                        else
+                        {
+                            Console.WriteLine($"Invalid image format for {game.gameName} at {game.iconLink}");
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"Failed to load image for {game.gameName}: {ex.Message}");
+                    }
+                }
+
+                // Add game details to the PDF
+                Paragraph gameName = new Paragraph(game.gameName, FontFactory.GetFont(FontFactory.HELVETICA_BOLD, 12));
+                gameName.Alignment = Element.ALIGN_CENTER;
+                doc.Add(gameName);
+
+                TimeSpan timeSinceRelease = DateTime.Now - game.releaseDate;
+                Paragraph releaseDate = new Paragraph($"Release Date: {game.releaseDate.ToShortDateString()} ({timeSinceRelease.Days} gün önce.)");
+                releaseDate.Alignment = Element.ALIGN_CENTER;
+                doc.Add(releaseDate);
+
+                Paragraph downloads = new Paragraph($"Total Downloads: {game.downloadValues.Last()}");
+                downloads.Alignment = Element.ALIGN_CENTER;
+                doc.Add(downloads);
+
+                Anchor gameLink = new Anchor($"Link: https://play.google.com/store/apps/details?id={game.gameBundleID}", FontFactory.GetFont(FontFactory.HELVETICA, 12, Font.UNDERLINE, BaseColor.BLUE));
+                gameLink.Reference = $"https://play.google.com/store/apps/details?id={game.gameBundleID}";
+                Paragraph linkParagraph = new Paragraph(gameLink);
+                linkParagraph.Alignment = Element.ALIGN_CENTER;
+                doc.Add(linkParagraph);
+
+                doc.Add(new Paragraph("\n"));
+            }
+
+            doc.Close();
+            Console.WriteLine("PDF report created successfully at " + filePath);
+        }
+
+        public static async Task<byte[]> ConvertWebPToPngAsync(string url)
+        {
+            using (HttpClient client = new HttpClient())
+            {
+                try
+                {
+                    var webpImageBytes = await client.GetByteArrayAsync(url);
+                    using (var inputStream = new MemoryStream(webpImageBytes))
+                    using (var webpBitmap = SKBitmap.Decode(inputStream))
+                    using (var image = SKImage.FromBitmap(webpBitmap))
+                    using (var outputStream = new MemoryStream())
+                    {
+                        var data = image.Encode(SKEncodedImageFormat.Png, 100);
+                        data.SaveTo(outputStream);
+                        return outputStream.ToArray();
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Failed to convert image from {url}: {ex.Message}");
+                    return null;
+                }
+            }
         }
     }
+
 }

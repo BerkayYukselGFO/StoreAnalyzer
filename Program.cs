@@ -76,6 +76,7 @@ namespace AppAnalyzer
             await CreatePDFReport(developers, "Son 3 ay raporu", 90, 500);
             await CreatePDFReport(developers, "Son 1 ay raporu", 30, 500);
             await CreatePDFReport(developers, "Son hafta raporu", 7, 0);
+            Console.WriteLine("Total game count: " + developers.Sum(x => x.games.Count));
             Console.Read();
         }
 
@@ -625,9 +626,9 @@ namespace AppAnalyzer
 
             await client.SetAsync("Developer/" + developer.developerName, developer);
         }
-        public static async Task CreatePDFReport(List<Developer> developers,string name,int dayDifference,int downloadMinCount)
+        public static async Task CreatePDFReport(List<Developer> developers, string name, int dayDifference, int downloadMinCount)
         {
-            string filePath = name+".pdf";
+            string filePath = name + ".pdf";
             Document doc = new Document();
             PdfWriter.GetInstance(doc, new FileStream(filePath, FileMode.Create));
             doc.Open();

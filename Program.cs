@@ -62,6 +62,7 @@ namespace AppAnalyzer
             {
                 try
                 {
+                    Console.WriteLine("İşlem: " + i.ToString() + "/" + developerLinks.Count.ToString());
                     await CheckDeveloper(developerLinks[i]);
                 }
                 catch (Exception ex)
@@ -142,7 +143,7 @@ namespace AppAnalyzer
                 //Son bir gün içinde kontrol edilmişse bir daha kontrol etme!
                 if (developers.Any(x => x.developerName == developerLink.developerName))
                 {
-                    if (DateTime.Compare(developers.First(x => x.developerName == developerLink.developerName).lastCheckDate.AddDays(1), DateTime.Now) > 0)
+                    if (DateTime.Compare(developers.First(x => x.developerName == developerLink.developerName).lastCheckDate.AddMinutes(240), DateTime.Now) > 0)
                     {
                         Console.WriteLine("Developer name: " + developerLink.developerName + " Son test edilmesinden bu yana 1 gün geçmemiş!");
                         return;
@@ -240,8 +241,19 @@ namespace AppAnalyzer
 
         public static List<string> CheckAppFromDeveloperMoreAppPage(string developerLink)
         {
+            System.Environment.SetEnvironmentVariable("webdriver.chrome.silentOutput", "true");
+            var chromeDriverService = ChromeDriverService.CreateDefaultService();
+            chromeDriverService.SuppressInitialDiagnosticInformation = true;
+            chromeDriverService.HideCommandPromptWindow = true;
+            chromeDriverService.EnableVerboseLogging = false;
+            chromeDriverService.LogPath = "NUL"; // Windows için
+            var options = new ChromeOptions();
+            options.AddArgument("--log-level=3");
+
+            options.BinaryLocation = "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe";
+            options.AddArgument("--headless=new");
             // Chrome WebDriver'ı başlat
-            var driver = new ChromeDriver();
+            var driver = new ChromeDriver(chromeDriverService,options);
 
             // Web sayfasını aç
 
@@ -301,7 +313,19 @@ namespace AppAnalyzer
 
         public static List<string> CheckAppFromDeveloperStorePage(string developerLink)
         {
-            var driver = new ChromeDriver();
+            System.Environment.SetEnvironmentVariable("webdriver.chrome.silentOutput", "true");
+            var chromeDriverService = ChromeDriverService.CreateDefaultService();
+            chromeDriverService.SuppressInitialDiagnosticInformation = true;
+            chromeDriverService.HideCommandPromptWindow = true;
+            chromeDriverService.EnableVerboseLogging = false;
+            chromeDriverService.LogPath = "NUL"; // Windows için
+            var options = new ChromeOptions();
+            options.AddArgument("--log-level=3");
+
+            options.BinaryLocation = "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe";
+            options.AddArgument("--headless=new");
+
+            var driver = new ChromeDriver(chromeDriverService,options);
 
             // Web sayfasını aç
             driver.Navigate().GoToUrl(developerLink);
@@ -407,13 +431,21 @@ namespace AppAnalyzer
 
         public static async Task<Game> CheckGame(string bundleId, Game currentData = null)
         {
+            System.Environment.SetEnvironmentVariable("webdriver.chrome.silentOutput", "true");
+            var chromeDriverService = ChromeDriverService.CreateDefaultService();
+            chromeDriverService.SuppressInitialDiagnosticInformation = true;
+            chromeDriverService.HideCommandPromptWindow = true;
+            chromeDriverService.EnableVerboseLogging = false;
+            chromeDriverService.LogPath = "NUL"; // Windows için
             var options = new ChromeOptions();
+            options.AddArgument("--log-level=3");
+
             options.BinaryLocation = "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe";
             options.AddArgument("--headless=new");
             var startTime = DateTime.Now;
             return await Task.Run(() =>
             {
-                using (var driver = new ChromeDriver(options))
+                using (var driver = new ChromeDriver(chromeDriverService, options))
                 {
                     try
                     {
@@ -641,8 +673,8 @@ namespace AppAnalyzer
 
             // Filter and sort games
             DateTime threeMonthsAgo = DateTime.Now.AddDays(-dayDifference);
-            var filteredGames = developers
-                .SelectMany(d => d.games)
+
+            var filteredGames = developers.SelectMany(d => d.games)
                 .Where(g => g.releaseDate >= threeMonthsAgo && g.downloadValues.Last() >= downloadMinCount)
                 .OrderByDescending(g => g.releaseDate)
                 .ToList();
